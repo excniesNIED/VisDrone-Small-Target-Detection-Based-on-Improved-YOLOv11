@@ -7,6 +7,9 @@ import numpy as np
 import torch
 import torch.nn as nn
 
+from .block import DFL, Proto
+from .utils import TORCH_1_10, make_divisible
+
 __all__ = (
     "Conv",
     "Conv2",
@@ -22,6 +25,8 @@ __all__ = (
     "Concat",
     "RepConv",
     "Index",
+    "PConv",
+    "Fast_C2f",
 )
 
 
@@ -712,3 +717,37 @@ class Index(nn.Module):
             (torch.Tensor): Selected tensor.
         """
         return x[self.index]
+
+
+class PConv(nn.Module):
+    """Partial Convolution module for lightweight feature extraction."""
+    def __init__(self, c1, c2, k=1, s=1, p=None, g=1, d=1, act=True):
+        """Initialize PConv module with given parameters."""
+        super().__init__()
+        c_ = c1 // 4  # 使用1/4的通道进行卷积运算
+        self.cv1 = Conv(c_, c_ * 2, k, s, p, g, d, act)  # 对1/4的通道进行标准卷积
+        self.c_ = c_
+
+    def forward(self, x):
+        """Forward pass of PConv."""
+        # 将输入分成两部分：一部分进行卷积，一部分直接通过
+        x1, x2 = x[:, :self.c_, ...], x[:, self.c_:, ...]
+        return torch.cat((self.cv1(x1), x2), 1)  # 拼接卷积结果和直通部分
+
+
+class Fast_C2f(nn.Module):
+    """Fast CSP Bottleneck with 2 convolutions and PConv."""
+    def __init__(self, c1, c2, n=1, shortcut=False, g=1, e=0.5):
+        """Initialize Fast_C2f module with given parameters."""
+        super().__init__()
+        self.c = int(c2 * e)  # hidden channels
+        self.cv1 = Conv(c1, 2 * self.c, 1, 1)
+        self.cv2 = Conv((2 + n) * self.c, c2, 1)  # optional act=FReLU(c2)
+        self.m = nn.ModuleList(PConv(self.c, self.c) for _ in range(n))
+        self.shortcut = shortcut and c1 == c2
+
+    def forward(self, x):
+        """Forward pass of Fast_C2f."""
+        y = list(self.cv1(x).chunk(2, 1))
+        y.extend(m(y[-1]) for m in self.m)
+        return self.cv2(torch.cat(y, 1)) + (x if self.shortcut else 0)

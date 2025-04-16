@@ -50,6 +50,7 @@ __all__ = (
     "PSA",
     "SCDown",
     "TorchVision",
+    "Dysample",
 )
 
 
@@ -1964,3 +1965,31 @@ class SAVPE(nn.Module):
         aggregated = score.transpose(-2, -3) @ x.reshape(B, self.c, C // self.c, -1).transpose(-1, -2)
 
         return F.normalize(aggregated.transpose(-2, -3).reshape(B, Q, -1), dim=-1, p=2)
+
+
+class Dysample(nn.Module):
+    """Dynamic upsampling module."""
+    def __init__(self, c1, scale_factor=2):
+        """Initialize Dysample module."""
+        super().__init__()
+        self.scale_factor = scale_factor
+        self.conv = Conv(c1, c1, 3, 1, 1)  # 3x3 conv for generating dynamic weights
+        self.unfold = nn.Unfold(kernel_size=3, padding=1)
+        
+    def forward(self, x):
+        """Forward pass of Dysample."""
+        B, C, H, W = x.shape
+        # 生成动态权重
+        weights = self.conv(x)  # B, C, H, W
+        weights = F.softmax(weights.view(B, C, -1), dim=2).view(B, C, H, W)
+        
+        # 展开输入特征图
+        x_unfold = self.unfold(x)  # B, C*k*k, L where k=3 and L=H*W
+        x_unfold = x_unfold.view(B, C, 9, H*W)
+        
+        # 应用动态权重
+        out = torch.sum(weights.view(B, C, 1, H*W) * x_unfold, dim=2)  # B, C, H*W
+        out = out.view(B, C, H, W)
+        
+        # 上采样
+        return F.interpolate(out, scale_factor=self.scale_factor, mode='bilinear', align_corners=True)
