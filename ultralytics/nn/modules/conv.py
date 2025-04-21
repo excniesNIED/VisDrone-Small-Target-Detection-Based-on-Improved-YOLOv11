@@ -7,8 +7,8 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-from .block import DFL, Proto
-from .utils import TORCH_1_10, make_divisible
+# from .block import DFL, Proto
+from ultralytics.utils.ops import make_divisible
 
 __all__ = (
     "Conv",
